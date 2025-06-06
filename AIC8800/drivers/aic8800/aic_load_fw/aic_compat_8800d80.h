@@ -15,7 +15,6 @@
 #ifdef CONFIG_FOR_IPCAM
 #define FW_BASE_NAME_8800D80_U02            "fmacfw_8800d80_u02_ipc.bin"
 #define FW_BASE_NAME_8800D80_H_U02          "fmacfw_8800d80_h_u02_ipc.bin"
-
 #else
 #define FW_BASE_NAME_8800D80_U02            "fmacfw_8800d80_u02.bin"
 #define FW_BASE_NAME_8800D80_H_U02          "fmacfw_8800d80_h_u02.bin"

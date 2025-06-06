@@ -329,11 +329,11 @@ static bool aicwf_another_ptk_1(struct rx_buff *buffer)
     u8 *read = buffer->read;
     u16 aggr_len = 0;
 
-    if(read == NULL || read >= (buffer->end - 1)) {
+    if(read == NULL || read >= (buffer->end - 2)) {
         return false;
     }
 
-    if(buffer->len == 0) {
+    if(buffer->len < 2) {
         return false;
     }
 
@@ -398,10 +398,11 @@ int aicwf_tasklet_rxframes(struct aicwf_rx_priv *rx_priv)
 		pkt_len = (*skb->data | (*(skb->data + 1) << 8));
 		//printk("p:%d, s:%d , %x\n", pkt_len, skb->len, data[2]);
 #ifndef CONFIG_USB_RX_REASSEMBLE
-		if (pkt_len > 1600) {
+		if (pkt_len > skb->len) {
+			AICWFDBG(LOGERROR, "%s pkt_len:%d skb->len:%d\r\n", __func__, pkt_len, skb->len);
 			dev_kfree_skb(skb);
 			atomic_dec(&rx_priv->rx_cnt);
-				continue;
+			continue;
 		}
 #endif
 		if((skb->data[2] & USB_TYPE_CFG) != USB_TYPE_CFG) { // type : data
@@ -584,8 +585,8 @@ int aicwf_process_rxframes(struct aicwf_rx_priv *rx_priv)
                 pkt_len = (*data | (*(data + 1) << 8));
                 //printk("%s cnt:%d pkt_len:%d \r\n", __func__, cnt, pkt_len);
 #ifndef CONFIG_USB_RX_REASSEMBLE
-                if (pkt_len > 1600) {
-                    AICWFDBG(LOGERROR, "%s pkt_len > 1600 \r\n", __func__);
+                if (pkt_len > buffer->len) {
+                    AICWFDBG(LOGERROR, "%s pkt_len:%d buffer->len:%d\r\n", __func__, pkt_len, buffer->len);
                     aicwf_prealloc_rxbuff_free(buffer, &rx_priv->rxbuff_lock);
                     atomic_dec(&rx_priv->rx_cnt);
                     return -EBADE;
@@ -665,7 +666,8 @@ int aicwf_process_rxframes(struct aicwf_rx_priv *rx_priv)
             pkt_len = (*data | (*(data + 1) << 8));
             //printk("p:%d, s:%d , %x\n", pkt_len, skb->len, data[2]);
 #ifndef CONFIG_USB_RX_REASSEMBLE
-            if (pkt_len > 1600) {
+            if (pkt_len > buffer->len) {
+                AICWFDBG(LOGERROR, "%s pkt_len:%d buffer->len:%d\r\n", __func__, pkt_len, buffer->len);
                 aicwf_prealloc_rxbuff_free(buffer, &rx_priv->rxbuff_lock);
                 atomic_dec(&rx_priv->rx_cnt);
                 continue;
@@ -746,8 +748,8 @@ int aicwf_process_rxframes(struct aicwf_rx_priv *rx_priv)
                 pkt_len = (*skb->data | (*(skb->data + 1) << 8));
                 //printk("p:%d, s:%d , %x\n", pkt_len, skb->len, data[2]);
 #ifndef CONFIG_USB_RX_REASSEMBLE
-                if (pkt_len > 1600) {
-                    AICWFDBG(LOGERROR, "%s pkt_len > 1600 \r\n", __func__);
+                if (pkt_len > skb->len) {
+                    AICWFDBG(LOGERROR, "%s pkt_len:%d skb->len:%d\r\n", __func__, pkt_len, skb->len);
                     //dev_kfree_skb(skb);
                     //atomic_dec(&rx_priv->rx_cnt);
                     //continue;
@@ -826,10 +828,11 @@ int aicwf_process_rxframes(struct aicwf_rx_priv *rx_priv)
             pkt_len = (*skb->data | (*(skb->data + 1) << 8));
             //printk("p:%d, s:%d , %x\n", pkt_len, skb->len, data[2]);
 #ifndef CONFIG_USB_RX_REASSEMBLE
-            if (pkt_len > 1600) {
+            if (pkt_len > skb->len) {
+                AICWFDBG(LOGERROR, "%s pkt_len:%d skb->len:%d\r\n", __func__, pkt_len, skb->len);
                 dev_kfree_skb(skb);
                 atomic_dec(&rx_priv->rx_cnt);
-                    continue;
+                continue;
             }
 #endif
 
@@ -986,7 +989,7 @@ static struct recv_msdu *aicwf_rxframe_queue_init(struct list_head *q, int qsize
     for (i = 0; i < qsize; i++) {
         INIT_LIST_HEAD(&req->rxframe_list);
         list_add(&req->rxframe_list, q);
-        req->len = 0;
+        //req->len = 0;
         req++;
     }
 

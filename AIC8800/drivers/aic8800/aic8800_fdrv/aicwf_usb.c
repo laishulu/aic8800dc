@@ -15,6 +15,7 @@
 #include "rwnx_defs.h"
 #include "usb_host.h"
 #include "rwnx_platform.h"
+#include "rwnx_msg_tx.h"
 
 #ifdef CONFIG_GPIO_WAKEUP
 #ifdef CONFIG_PLATFORM_ROCKCHIP
@@ -55,6 +56,7 @@ bool aicwf_usb_rx_aggr = false;
 #endif
 atomic_t rx_urb_cnt;
 bool rx_urb_sched = false;
+u32 aicwf_usb_max_pkt_size = AICWF_USB_MAX_PKT_SIZE;
 
 void aicwf_usb_tx_flowctrl(struct rwnx_hw *rwnx_hw, bool state)
 {
@@ -315,10 +317,10 @@ static void aicwf_usb_rx_complete(struct urb *urb)
 
     if (usb_dev->state == USB_UP_ST) {
         spin_lock_irqsave(&rx_priv->rxqlock, flags);
-        if (aicwf_usb_rx_aggr) {
+        //if (aicwf_usb_rx_aggr) {
             rx_buff->len = urb->actual_length;
             //printk("%s rx_buff->len:%d \r\n", __func__, rx_buff->len);
-        }
+        //}
 
         if(!aicwf_rxbuff_enqueue(usb_dev->dev, &rx_priv->rxq, rx_buff)){
             spin_unlock_irqrestore(&rx_priv->rxqlock, flags);
@@ -427,7 +429,7 @@ static void aicwf_usb_rx_complete(struct urb *urb)
                         reassemble_done = true;
                     }
                 } else {
-                    if (frag_len == AICWF_USB_MAX_PKT_SIZE) {
+                    if (frag_len == aicwf_usb_max_pkt_size) {
                         reassemble_valid = true;
                     }
                 }
@@ -472,7 +474,7 @@ static void aicwf_usb_rx_complete(struct urb *urb)
                 u32 pkt_len = skb->data[0] | (skb->data[1] << 8);
                 if ((type & USB_TYPE_CFG) != USB_TYPE_CFG) {
                     u32 pkt_total_len = pkt_len + RX_HWHRD_LEN;
-                    if ((pkt_total_len > AICWF_USB_MAX_PKT_SIZE) && (skb->len == AICWF_USB_MAX_PKT_SIZE)) {
+                    if ((pkt_total_len > aicwf_usb_max_pkt_size) && (skb->len == aicwf_usb_max_pkt_size)) {
                         AICWFDBG(LOGINFO, "reassemble pkt, len=%u\n", pkt_total_len);
                         struct sk_buff *reassemble_skb = __dev_alloc_skb(pkt_total_len, GFP_ATOMIC/*GFP_KERNEL*/);
                         if (reassemble_skb) {
@@ -481,7 +483,7 @@ static void aicwf_usb_rx_complete(struct urb *urb)
                             rx_priv->rx_reassemble_skb = reassemble_skb;
                             rx_priv->rx_reassemble_total_len = pkt_total_len;
                             rx_priv->rx_reassemble_cur_len = skb->len;
-                            rx_priv->rx_reassemble_total_frags = ALIGN(pkt_total_len, AICWF_USB_MAX_PKT_SIZE) / AICWF_USB_MAX_PKT_SIZE;
+                            rx_priv->rx_reassemble_total_frags = ALIGN(pkt_total_len, aicwf_usb_max_pkt_size) / aicwf_usb_max_pkt_size;
                             rx_priv->rx_reassemble_cur_frags = 1;
                         } else {
                             usb_err("reassemble pkt alloc fail, len=%u\n", pkt_total_len);
@@ -497,7 +499,7 @@ static void aicwf_usb_rx_complete(struct urb *urb)
                 } else {
                     if (type == USB_TYPE_CFG_CMD_RSP) {
                         u32 pkt_total_len = ALIGN((pkt_len + 4), 4);
-                        if ((pkt_total_len > AICWF_USB_MAX_PKT_SIZE) && (skb->len == AICWF_USB_MAX_PKT_SIZE)) {
+                        if ((pkt_total_len > aicwf_usb_max_pkt_size) && (skb->len == aicwf_usb_max_pkt_size)) {
                             AICWFDBG(LOGINFO, "reassemble pkt, len=%u\n", pkt_total_len);
                             struct sk_buff *reassemble_skb = __dev_alloc_skb(pkt_total_len, GFP_ATOMIC/*GFP_KERNEL*/);
                             if (reassemble_skb) {
@@ -506,7 +508,7 @@ static void aicwf_usb_rx_complete(struct urb *urb)
                                 rx_priv->rx_reassemble_skb = reassemble_skb;
                                 rx_priv->rx_reassemble_total_len = pkt_total_len;
                                 rx_priv->rx_reassemble_cur_len = skb->len;
-                                rx_priv->rx_reassemble_total_frags = ALIGN(pkt_total_len, AICWF_USB_MAX_PKT_SIZE) / AICWF_USB_MAX_PKT_SIZE;
+                                rx_priv->rx_reassemble_total_frags = ALIGN(pkt_total_len, aicwf_usb_max_pkt_size) / aicwf_usb_max_pkt_size;
                                 rx_priv->rx_reassemble_cur_frags = 1;
                             } else {
                                 usb_err("reassemble pkt alloc fail, len=%u\n", pkt_total_len);
@@ -806,7 +808,7 @@ static int aicwf_usb_submit_rx_urb(struct aic_usb_dev *usb_dev,
     if(aicwf_usb_rx_aggr){
         skb = __dev_alloc_skb(AICWF_USB_AGGR_MAX_PKT_SIZE, GFP_ATOMIC/*GFP_KERNEL*/);
     } else {
-        skb = __dev_alloc_skb(AICWF_USB_MAX_PKT_SIZE, GFP_ATOMIC/*GFP_KERNEL*/);
+        skb = __dev_alloc_skb(aicwf_usb_max_pkt_size, GFP_ATOMIC/*GFP_KERNEL*/);
     }
     if (!skb) {
         aicwf_usb_rx_buf_put(usb_dev, usb_buf);
@@ -824,7 +826,7 @@ static int aicwf_usb_submit_rx_urb(struct aic_usb_dev *usb_dev,
         usb_fill_bulk_urb(usb_buf->urb,
             usb_dev->udev,
             usb_dev->bulk_in_pipe,
-            skb->data, AICWF_USB_MAX_PKT_SIZE, aicwf_usb_rx_complete, usb_buf);
+            skb->data, aicwf_usb_max_pkt_size, aicwf_usb_rx_complete, usb_buf);
     }
 
     usb_buf->usbdev = usb_dev;
@@ -1212,6 +1214,9 @@ fail:
         usb_buf->skb = NULL;
         aicwf_usb_tx_queue(usb_dev, &usb_dev->tx_free_list, usb_buf,
                     &usb_dev->tx_free_count, &usb_dev->tx_free_lock);
+		if (ret == -ENODEV) {
+			break;
+		}
 #endif
     }
 }
@@ -1903,8 +1908,8 @@ static int aicwf_usb_bus_start(struct device *dev)
 	if(usb_dev->msg_in_pipe){
 		aicwf_usb_msg_rx_prepare(usb_dev);
 	} else {
-        aicwf_usb_rx_prepare(usb_dev);
-    }
+		aicwf_usb_rx_prepare(usb_dev);
+	}
 #endif
     if(!usb_dev->msg_in_pipe && !usb_dev->rx_prepare_ready){
         AICWFDBG(LOGERROR, "%s rx prepare fail\r\n", __func__);
@@ -2148,10 +2153,11 @@ static int aicwf_parse_usb(struct aic_usb_dev *usb_dev, struct usb_interface *in
 		if(usb_dev->chipid == PRODUCT_ID_AIC8800DC){
 			AICWFDBG(LOGERROR, "AIC8800DC change to AIC8800DW\n");
 			usb_dev->chipid = PRODUCT_ID_AIC8800DW;
-		}else if (usb_dev->chipid == PRODUCT_ID_AIC8800DW) {
-            printk("8800dw\n");
+		} else if (usb_dev->chipid == PRODUCT_ID_AIC8800D81) {
+            AICWFDBG(LOGINFO, "AIC8800D80\n");
 		} else if(usb_dev->chipid == PRODUCT_ID_AIC8800D81X2 ||
-                usb_dev->chipid == PRODUCT_ID_AIC8800D89X2){
+                usb_dev->chipid == PRODUCT_ID_AIC8800D89X2 ||
+                usb_dev->chipid == PRODUCT_ID_AIC8800D81){
             //TODO
         }else{
 			ret = -ENODEV;
@@ -2334,26 +2340,54 @@ static int aicwf_usb_chipmatch(struct aic_usb_dev *usb_dev, u16_l vid, u16_l pid
 		usb_dev->chipid = PRODUCT_ID_AIC8801;
 		AICWFDBG(LOGINFO, "%s USE AIC8801\r\n", __func__);
 		return 0;
-	}else if(pid == USB_PRODUCT_ID_AIC8800DC){
+	}else if(pid == USB_PRODUCT_ID_AIC8800DC || pid == USB_PRODUCT_ID_TENDA
+		|| pid == USB_PRODUCT_ID_TENDA_U2  || pid == USB_PRODUCT_ID_AIC8800FC_CUS1
+		|| pid == USB_PRODUCT_ID_AIC8800FC_CUS2 || pid == USB_PRODUCT_ID_AIC8800FC_CUS3
+		|| pid == USB_PRODUCT_ID_AIC8800FC_CUS4 || pid == USB_PRODUCT_ID_AIC8800FC_CUS5
+		|| pid == USB_PRODUCT_ID_AIC8800FC_CUS6){
 		usb_dev->chipid = PRODUCT_ID_AIC8800DC;
 		AICWFDBG(LOGINFO, "%s USE AIC8800DC\r\n", __func__);
 		return 0;
-	}else if(pid == USB_PRODUCT_ID_AIC8800DW || pid == USB_PRODUCT_ID_TP
-	 || pid == USB_PRODUCT_ID_AIC8800FC){
+	}else if(pid == USB_PRODUCT_ID_AIC8800DW){
         usb_dev->chipid = PRODUCT_ID_AIC8800DW;
 		AICWFDBG(LOGINFO, "%s USE AIC8800DW\r\n", __func__);
         return 0;
-    }else if(pid == USB_PRODUCT_ID_AIC8800D81 || pid == USB_PRODUCT_ID_AIC8800D41){
+    }else if(pid == USB_PRODUCT_ID_AIC8800D81 || pid == USB_PRODUCT_ID_AIC8800D41
+		|| pid == USB_PRODUCT_ID_TENDA_U11 || pid == USB_PRODUCT_ID_TENDA_U11_PRO
+		|| pid == USB_PRODUCT_ID_AIC8800M80_CUS1 || pid == USB_PRODUCT_ID_AIC8800M80_CUS2
+		|| pid == USB_PRODUCT_ID_AIC8800M80_CUS3 || pid == USB_PRODUCT_ID_AIC8800M80_CUS4
+		|| pid == USB_PRODUCT_ID_AIC8800M80_CUS5 || pid == USB_PRODUCT_ID_AIC8800M80_CUS6
+		|| pid == USB_PRODUCT_ID_AIC8800M80_CUS7 || pid == USB_PRODUCT_ID_AIC8800M80_CUS8){
         usb_dev->chipid = PRODUCT_ID_AIC8800D81;
         aicwf_usb_rx_aggr = true;
         AICWFDBG(LOGINFO, "%s USE AIC8800D81\r\n", __func__);
         return 0;
     }else if(pid == USB_PRODUCT_ID_AIC8800D81X2){
         usb_dev->chipid = PRODUCT_ID_AIC8800D81X2;
+        aicwf_usb_max_pkt_size = AICWF_USB_MAX_AMSDU_PKT_SIZE;
+        if (usb_dev->udev->speed <= USB_SPEED_HIGH) {
+            aicwf_usb_rx_aggr = true;
+        } else {
+            #ifdef CONFIG_PLATFORM_HI
+            aicwf_usb_rx_aggr = true;
+            #else
+            aicwf_usb_rx_aggr = false;
+            #endif
+        }
         AICWFDBG(LOGINFO, "%s USE AIC8800D81X2\r\n", __func__);
         return 0;
     }else if(pid == USB_PRODUCT_ID_AIC8800D89X2){
         usb_dev->chipid = PRODUCT_ID_AIC8800D89X2;
+        aicwf_usb_max_pkt_size = AICWF_USB_MAX_AMSDU_PKT_SIZE;
+        if (usb_dev->udev->speed <= USB_SPEED_HIGH) {
+            aicwf_usb_rx_aggr = true;
+        } else {
+            #ifdef CONFIG_PLATFORM_HI
+            aicwf_usb_rx_aggr = true;
+            #else
+            aicwf_usb_rx_aggr = false;
+            #endif
+        }
         AICWFDBG(LOGINFO, "%s USE AIC8800D89X2\r\n", __func__);
         return 0;
     }else{
@@ -2419,6 +2453,9 @@ static int aicwf_usb_probe(struct usb_interface *intf, const struct usb_device_i
     usb_dev->udev = usb;
     usb_dev->dev = &usb->dev;
     usb_set_intfdata(intf, usb_dev);
+
+    usb_dev->vid = id->idVendor;
+    usb_dev->pid = id->idProduct;
 
 	ret = aicwf_usb_chipmatch(usb_dev, id->idVendor, id->idProduct);
 
@@ -2557,62 +2594,53 @@ static void aicwf_usb_disconnect(struct usb_interface *intf)
 static int aicwf_usb_suspend(struct usb_interface *intf, pm_message_t state)
 {
     struct aic_usb_dev *usb_dev =
-        (struct aic_usb_dev *) usb_get_intfdata(intf);
-#ifdef CONFIG_GPIO_WAKEUP
-	struct rwnx_vif *rwnx_vif, *tmp;
-	//unsigned long irqflags;
-#endif
-
-	printk("%s enter\r\n", __func__);
-
-#ifdef CONFIG_GPIO_WAKEUP
-//	spin_lock_irqsave(&irq_lock, irqflags);
-//	rwnx_enable_hostwake_irq();
-//    spin_unlock_irqrestore(&irq_lock, irqflags);
-    atomic_inc(&irq_count);
-
-	list_for_each_entry_safe(rwnx_vif, tmp, &usb_dev->rwnx_hw->vifs, list) {
-	if (rwnx_vif->ndev)
-		netif_device_detach(rwnx_vif->ndev);
-	}
-#endif
-
-	aicwf_usb_state_change(usb_dev, USB_SLEEP_ST);
+    (struct aic_usb_dev *) usb_get_intfdata(intf);
+    struct rwnx_vif *rwnx_vif, *tmp;
+        
+    AICWFDBG(LOGINFO, "%s enter\r\n", __func__);
+#ifdef CONFIG_WOWLAN
+    rwnx_send_dummy_reboot(usb_dev->rwnx_hw);
+#endif       
+    list_for_each_entry_safe(rwnx_vif, tmp, &usb_dev->rwnx_hw->vifs, list) {
+        if (rwnx_vif->ndev){
+            netif_tx_stop_all_queues(rwnx_vif->ndev);
+            mdelay(1000);
+        }
+    }
+    aicwf_usb_state_change(usb_dev, USB_SLEEP_ST);
     aicwf_bus_stop(usb_dev->bus_if);
 
+    list_for_each_entry_safe(rwnx_vif, tmp, &usb_dev->rwnx_hw->vifs, list) {
+        if (rwnx_vif->ndev)
+            netif_device_detach(rwnx_vif->ndev);
+    }
 
-    return 0;
+return 0;
 }
 
 static int aicwf_usb_resume(struct usb_interface *intf)
 {
     struct aic_usb_dev *usb_dev =
-        (struct aic_usb_dev *) usb_get_intfdata(intf);
-#ifdef CONFIG_GPIO_WAKEUP
-	struct rwnx_vif *rwnx_vif, *tmp;
-//	unsigned long irqflags;
-#endif
-	printk("%s enter\r\n", __func__);
-
-#ifdef CONFIG_GPIO_WAKEUP
-//	spin_lock_irqsave(&irq_lock, irqflags);
-//	rwnx_disable_hostwake_irq();
-//	spin_unlock_irqrestore(&irq_lock, irqflags);
-	atomic_dec(&irq_count);
-
-	list_for_each_entry_safe(rwnx_vif, tmp, &usb_dev->rwnx_hw->vifs, list) {
-	if (rwnx_vif->ndev)
-		netif_device_attach(rwnx_vif->ndev);
-	}
-#endif
-
-    if (usb_dev->state == USB_UP_ST)
-        return 0;
-
-    aicwf_bus_start(usb_dev->bus_if);
-    if(usb_dev->msg_in_pipe){
-        aicwf_usb_rx_prepare(usb_dev);
+         (struct aic_usb_dev *) usb_get_intfdata(intf);
+    struct rwnx_vif *rwnx_vif, *tmp;
+    AICWFDBG(LOGINFO, "%s enter\r\n", __func__);
+    list_for_each_entry_safe(rwnx_vif, tmp, &usb_dev->rwnx_hw->vifs, list) {
+        if (rwnx_vif->ndev)
+            netif_device_attach(rwnx_vif->ndev);
     }
+
+        if (usb_dev->state != USB_UP_ST){
+        aicwf_bus_start(usb_dev->bus_if);
+        }
+
+    list_for_each_entry_safe(rwnx_vif, tmp, &usb_dev->rwnx_hw->vifs, list) {
+        if (rwnx_vif->ndev){
+            netif_tx_wake_all_queues(rwnx_vif->ndev);
+        }
+    }
+	if(usb_dev->msg_in_pipe){
+        aicwf_usb_rx_prepare(usb_dev);
+	}
     return 0;
 }
 
@@ -2631,9 +2659,25 @@ static struct usb_device_id aicwf_usb_id_table[] = {
     {USB_DEVICE_AND_INTERFACE_INFO(USB_VENDOR_ID_AIC, USB_PRODUCT_ID_AIC8800DC, 0xff, 0xff, 0xff)},
     {USB_DEVICE(USB_VENDOR_ID_AIC, USB_PRODUCT_ID_AIC8800DW)},
     {USB_DEVICE_AND_INTERFACE_INFO(USB_VENDOR_ID_AIC_V2, USB_PRODUCT_ID_AIC8800D81X2, 0xff, 0xff, 0xff)},
-    {USB_DEVICE(USB_VENDOR_ID_TP, USB_PRODUCT_ID_TP)},
-    {USB_DEVICE(USB_VENDOR_ID_AIC_V2, USB_PRODUCT_ID_AIC8800FC)},
     {USB_DEVICE(USB_VENDOR_ID_AIC_V2, USB_PRODUCT_ID_AIC8800D89X2)},
+    {USB_DEVICE(USB_VENDOR_ID_TENDA, USB_PRODUCT_ID_TENDA)},
+    {USB_DEVICE(USB_VENDOR_ID_TENDA, USB_PRODUCT_ID_TENDA_U2)},
+    {USB_DEVICE(USB_VENDOR_ID_TENDA, USB_PRODUCT_ID_TENDA_U11)},
+    {USB_DEVICE(USB_VENDOR_ID_TENDA, USB_PRODUCT_ID_TENDA_U11_PRO)},
+    {USB_DEVICE(USB_VENDOR_ID_AIC_V2, USB_PRODUCT_ID_AIC8800FC_CUS1)},
+    {USB_DEVICE(USB_VENDOR_ID_AIC_V2, USB_PRODUCT_ID_AIC8800FC_CUS2)},
+    {USB_DEVICE(USB_VENDOR_ID_AIC_V2, USB_PRODUCT_ID_AIC8800FC_CUS3)},
+    {USB_DEVICE(USB_VENDOR_ID_AIC_V2, USB_PRODUCT_ID_AIC8800FC_CUS4)},
+    {USB_DEVICE(USB_VENDOR_ID_AIC_V2, USB_PRODUCT_ID_AIC8800FC_CUS5)},
+    {USB_DEVICE(USB_VENDOR_ID_AIC_V2, USB_PRODUCT_ID_AIC8800FC_CUS6)},
+    {USB_DEVICE(USB_VENDOR_ID_AIC_V2, USB_PRODUCT_ID_AIC8800M80_CUS1)},
+    {USB_DEVICE(USB_VENDOR_ID_AIC_V2, USB_PRODUCT_ID_AIC8800M80_CUS2)},
+    {USB_DEVICE(USB_VENDOR_ID_AIC_V2, USB_PRODUCT_ID_AIC8800M80_CUS3)},
+    {USB_DEVICE(USB_VENDOR_ID_AIC_V2, USB_PRODUCT_ID_AIC8800M80_CUS4)},
+    {USB_DEVICE(USB_VENDOR_ID_AIC_V2, USB_PRODUCT_ID_AIC8800M80_CUS5)},
+    {USB_DEVICE(USB_VENDOR_ID_AIC_V2, USB_PRODUCT_ID_AIC8800M80_CUS6)},
+    {USB_DEVICE(USB_VENDOR_ID_AIC_V2, USB_PRODUCT_ID_AIC8800M80_CUS7)},
+    {USB_DEVICE(USB_VENDOR_ID_AIC_V2, USB_PRODUCT_ID_AIC8800M80_CUS8)},
 #endif
     {}
 };

@@ -43,9 +43,10 @@
 #define RWNX_MAC_RF_PATCH_NAME_8800DC RWNX_MAC_RF_PATCH_BASE_NAME_8800DC".bin"
 #define FW_USERCONFIG_NAME_8800DC         "aic_userconfig_8800dc.txt"
 #define FW_USERCONFIG_NAME_8800DW         "aic_userconfig_8800dw.txt"
-#define FW_USERCONFIG_NAME_8800DW_2357    "aic_userconfig_8800dw_2357.txt"
 #define FW_POWERLIMIT_NAME_8800DC         "aic_powerlimit_8800dc.txt"
 #define FW_POWERLIMIT_NAME_8800DW         "aic_powerlimit_8800dw.txt"
+#define FW_USERCONFIG_NAME_8800DW_W311    "aic_userconfig_8800dw_w311.txt"
+#define FW_USERCONFIG_NAME_8800DW_U2      "aic_userconfig_8800dw_u2.txt"
 
 #ifdef CONFIG_LOAD_BT_PATCH_IN_FDRV
 enum aicbt_patch_table_type {
@@ -250,7 +251,10 @@ u32 patch_tbl_wifisetting[][2] =
     {0x0120, 0x140A0100}, //usb agg tx params(total cnt, aggr cnt, out en, global out nak)
 #endif //CONFIG_USB_TX_AGGR
     {0x00b0, 0xAD180100},
-	{0x0084, 0x00000040},
+#ifdef CONFIG_BAND_STEERING
+    {0x0138, 0x00010a00}, //apm probe resp offload en
+#endif
+    {0x0084, 0x00000040},
 };
 
 u32 jump_tbl[][2] =
@@ -3034,61 +3038,81 @@ int aicwf_misc_ram_valid_check_8800dc(struct rwnx_hw *rwnx_hw, int *valid_out)
     uint32_t misc_ram_addr;
     uint32_t ram_base_addr, ram_word_cnt;
     uint32_t bit_mask[4];
+    uint32_t dpd_info_read_addr = 0xfe004;
+    uint32_t boot_argc_read_addr = 0x1220f0;
+    uint32_t flash_size_mem_addr = 0x40038030;
+    uint8_t flash_size = 0;
     int i;
     if (valid_out) {
         *valid_out = 0;
     }
-    if (testmode == FW_RFTEST_MODE) {
-	    uint32_t vect1 = 0;
-	    uint32_t vect2 = 0;
-	    cfg_base = RAM_LMAC_FW_ADDR + 0x0004;
-	    ret = rwnx_send_dbg_mem_read_req(rwnx_hw, cfg_base, &cfm);
-	    if (ret) {
-		    AICWFDBG(LOGERROR, "cfg_base:%x vcet1 rd fail: %d\n", cfg_base, ret);
-		    return ret;
-	    }
-	    vect1 = cfm.memdata;
-	    if ((vect1 & 0xFFFF0000) != (RAM_LMAC_FW_ADDR & 0xFFFF0000)) {
-		    AICWFDBG(LOGERROR, "vect1 invalid: %x\n", vect1);
-		    return ret;
-	    }
-	    cfg_base = RAM_LMAC_FW_ADDR + 0x0008;
-	    ret = rwnx_send_dbg_mem_read_req(rwnx_hw, cfg_base, &cfm);
-	    if (ret) {
-		    AICWFDBG(LOGERROR, "cfg_base:%x vcet2 rd fail: %d\n", cfg_base, ret);
-		    return ret;
-	    }
-	    vect2 = cfm.memdata;
-	    if ((vect2 & 0xFFFF0000) != (RAM_LMAC_FW_ADDR & 0xFFFF0000)) {
-		    AICWFDBG(LOGERROR, "vect2 invalid: %x\n", vect2);
-		    return ret;
-	    }
-	    cfg_base = RAM_LMAC_FW_ADDR + 0x0164;
-    }
-    // init misc ram
-    ret = rwnx_send_dbg_mem_read_req(rwnx_hw, cfg_base + 0x14, &cfm);
+
+    ret = rwnx_send_dbg_mem_read_req(rwnx_hw, boot_argc_read_addr, &cfm);
     if (ret) {
-        AICWFDBG(LOGERROR, "rf misc ram[0x%x] rd fail: %d\n", cfg_base + 0x14, ret);
+        AICWFDBG(LOGERROR, "boot argc [0x%x] rd fail: %d\n", boot_argc_read_addr, ret);
+            return ret;
+    }
+       printk("boot argc %x\n", cfm.memdata); 
+    if (cfm.memdata & 0x10) {
+        *valid_out = 1;
         return ret;
     }
-    misc_ram_addr = cfm.memdata;
-    AICWFDBG(LOGERROR, "misc_ram_addr=%x\n", misc_ram_addr);
-    // bit_mask
-    ram_base_addr = misc_ram_addr + offsetof(rf_misc_ram_t, bit_mask);
-    ram_word_cnt = (MEMBER_SIZE(rf_misc_ram_t, bit_mask) + MEMBER_SIZE(rf_misc_ram_t, reserved)) / 4;
-    for (i = 0; i < ram_word_cnt; i++) {
-        ret = rwnx_send_dbg_mem_read_req(rwnx_hw, ram_base_addr + i * 4, &cfm);
+    if (chip_mcu_id) {
+        ret = rwnx_send_dbg_mem_read_req(rwnx_hw, flash_size_mem_addr, &cfm);
         if (ret) {
-            AICWFDBG(LOGERROR, "bit_mask[0x%x] rd fail: %d\n",  ram_base_addr + i * 4, ret);
+            AICWFDBG(LOGERROR, "flash size[0x%x] rd fail: %d\n", flash_size_mem_addr, ret);
             return ret;
         }
-        bit_mask[i] = cfm.memdata;
-    }
-    AICWFDBG(LOGTRACE, "bit_mask:%x,%x,%x,%x\n",bit_mask[0],bit_mask[1],bit_mask[2],bit_mask[3]);
-    if ((bit_mask[0] == 0) && ((bit_mask[1] & 0xFFF00000) == 0x80000000) &&
-        (bit_mask[2] == 0) && ((bit_mask[3] & 0xFFFFFF00) == 0x00000000)) {
-        if (valid_out) {
-            *valid_out = 1;
+        flash_size = cfm.memdata & 0xff;
+       printk("flash size %x\n", flash_size); 
+        if (flash_size == 0x16) {
+            dpd_info_read_addr += 0x4300000;
+        } else if (flash_size == 0x15) {
+            dpd_info_read_addr += 0x4100000;
+        } else if (flash_size == 0x18) {
+            dpd_info_read_addr += 0x4700000;
+        } else {
+            dpd_info_read_addr += 0x4100000;
+        }
+        ret = rwnx_send_dbg_mem_read_req(rwnx_hw, dpd_info_read_addr, &cfm);
+        if (ret) {
+            AICWFDBG(LOGERROR, "dpd info [0x%x] rd fail: %d\n", dpd_info_read_addr, ret);
+            return ret;
+        }
+        if (cfm.memdata & (1<<7)) {
+             if (valid_out) {
+                *valid_out = 1;
+            }
+        }
+    } else {
+        if (testmode == FW_RFTEST_MODE) {
+            cfg_base = RAM_LMAC_FW_ADDR + 0x0164;
+        }
+        // init misc ram
+        ret = rwnx_send_dbg_mem_read_req(rwnx_hw, cfg_base + 0x14, &cfm);
+        if (ret) {
+            AICWFDBG(LOGERROR, "rf misc ram[0x%x] rd fail: %d\n", cfg_base + 0x14, ret);
+            return ret;
+        }
+        misc_ram_addr = cfm.memdata;
+        AICWFDBG(LOGERROR, "misc_ram_addr=%x\n", misc_ram_addr);
+        // bit_mask
+        ram_base_addr = misc_ram_addr + offsetof(rf_misc_ram_t, bit_mask);
+        ram_word_cnt = (MEMBER_SIZE(rf_misc_ram_t, bit_mask) + MEMBER_SIZE(rf_misc_ram_t, reserved)) / 4;
+        for (i = 0; i < ram_word_cnt; i++) {
+            ret = rwnx_send_dbg_mem_read_req(rwnx_hw, ram_base_addr + i * 4, &cfm);
+            if (ret) {
+                AICWFDBG(LOGERROR, "bit_mask[0x%x] rd fail: %d\n",  ram_base_addr + i * 4, ret);
+                return ret;
+            }
+            bit_mask[i] = cfm.memdata;
+        }
+        AICWFDBG(LOGTRACE, "bit_mask:%x,%x,%x,%x\n",bit_mask[0],bit_mask[1],bit_mask[2],bit_mask[3]);
+        if ((bit_mask[0] == 0) && ((bit_mask[1] & 0xFFF00000) == 0x80000000) &&
+            (bit_mask[2] == 0) && ((bit_mask[3] & 0xFFFFFF00) == 0x00000000)) {
+            if (valid_out) {
+                *valid_out = 1;
+            }
         }
     }
     return ret;
@@ -3487,10 +3511,18 @@ int	rwnx_plat_userconfig_load_8800dw(struct rwnx_hw *rwnx_hw){
     int size;
     u32 *dst=NULL;
     char *filename = FW_USERCONFIG_NAME_8800DW;
-
-    if (rwnx_hw->usbdev->udev->descriptor.idProduct == 0x0147 && rwnx_hw->usbdev->udev->descriptor.idVendor==0x2357) {
-        filename = FW_USERCONFIG_NAME_8800DW_2357;
+    if (rwnx_hw->usbdev->pid == USB_PRODUCT_ID_TENDA 
+        || rwnx_hw->usbdev->pid == USB_PRODUCT_ID_AIC8800FC_CUS3
+        || rwnx_hw->usbdev->pid == USB_PRODUCT_ID_AIC8800FC_CUS5
+        || rwnx_hw->usbdev->pid == USB_PRODUCT_ID_AIC8800FC_CUS6) {
+        filename = FW_USERCONFIG_NAME_8800DW_W311;
+    } else if (rwnx_hw->usbdev->pid == USB_PRODUCT_ID_TENDA_U2
+        || rwnx_hw->usbdev->pid == USB_PRODUCT_ID_AIC8800FC_CUS1
+        || rwnx_hw->usbdev->pid == USB_PRODUCT_ID_AIC8800FC_CUS2
+        || rwnx_hw->usbdev->pid == USB_PRODUCT_ID_AIC8800FC_CUS4) {
+        filename = FW_USERCONFIG_NAME_8800DW_U2;
     }
+
     AICWFDBG(LOGINFO, "userconfig file path:%s \r\n", filename);
 
     /* load file */

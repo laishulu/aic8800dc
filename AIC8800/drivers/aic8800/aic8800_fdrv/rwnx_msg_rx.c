@@ -396,6 +396,40 @@ static inline int rwnx_rx_pktloss_notify_ind(struct rwnx_hw *rwnx_hw,
     return 0;
 }
 
+static inline int rwnx_radar_detect_ind(struct rwnx_hw *rwnx_hw,
+                                                struct rwnx_cmd *cmd,
+                                                struct ipc_e2a_msg *msg)
+{
+    struct radar_pulse_array_desc *pulses = (struct radar_pulse_array_desc *)msg->param;
+	int i;
+
+    RWNX_DBG(RWNX_FN_ENTRY_STR);
+    //printk("%s\n", __func__);
+
+    if(pulses->cnt == 0) {
+		printk("cnt error\n");
+		return -1;
+    }
+
+	if(rwnx_radar_detection_is_enable(&rwnx_hw->radar, pulses->idx)) {
+		for(i=0; i<pulses->cnt; i++) {
+			struct rwnx_radar_pulses *p = &rwnx_hw->radar.pulses[pulses->idx];
+
+			p->buffer[p->index] = pulses->pulse[i];
+			p->index = (p->index + 1)%RWNX_RADAR_PULSE_MAX;
+			if(p->count < RWNX_RADAR_PULSE_MAX)
+				p->count++;
+			//printk("pulse=%x\n", pulses->pulse[i]);
+		}
+
+		if(!work_pending(&rwnx_hw->radar.detection_work))
+			schedule_work(&rwnx_hw->radar.detection_work);
+    } else
+		printk("not enable\n");
+
+    return 0;
+}
+
 static inline int rwnx_apm_staloss_ind(struct rwnx_hw *rwnx_hw,
                                                 struct rwnx_cmd *cmd,
                                                 struct ipc_e2a_msg *msg)
@@ -681,6 +715,11 @@ static inline int rwnx_rx_scanu_result_ind(struct rwnx_hw *rwnx_hw,
     struct ieee80211_channel *chan;
     struct scanu_result_ind *ind = (struct scanu_result_ind *)msg->param;
     struct ieee80211_mgmt *mgmt = (struct ieee80211_mgmt *)ind->payload;
+	u64 tsf;
+	u8 *ie;
+	size_t ielen;
+	u16 capability, beacon_interval;
+	u16 len = ind->length;
 
 #if 0    
 	const u8 *ie = mgmt->u.beacon.variable;
@@ -699,20 +738,34 @@ static inline int rwnx_rx_scanu_result_ind(struct rwnx_hw *rwnx_hw,
     chan = ieee80211_get_channel(rwnx_hw->wiphy, ind->center_freq);
 
     if (chan != NULL) {
-        #if LINUX_VERSION_CODE < KERNEL_VERSION(3, 17, 0)
-        //ktime_t ts;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 17, 0)
         struct timespec ts;
-		get_monotonic_boottime(&ts);
-        //ts = ktime_get_real();
+        get_monotonic_boottime(&ts);
+        tsf = (u64)ts.tv_sec * 1000000 + div_u64(ts.tv_nsec, 1000);
         mgmt->u.probe_resp.timestamp = ((u64)ts.tv_sec*1000000) + ts.tv_nsec/1000;
-        #else
+#elif LINUX_VERSION_CODE < KERNEL_VERSION(5, 6, 0)
+        struct timespec ts;
+        ts = ktime_to_timespec(ktime_get_boottime());
+        tsf = (u64)ts.tv_sec * 1000000 + div_u64(ts.tv_nsec, 1000);
+        mgmt->u.probe_resp.timestamp = tsf;
+#else
         struct timespec64 ts;
-        ktime_get_real_ts64(&ts);
-        mgmt->u.probe_resp.timestamp = ((u64)ts.tv_sec*1000000) + ts.tv_nsec/1000;
-        #endif
-        bss = cfg80211_inform_bss_frame(rwnx_hw->wiphy, chan,
-                                        (struct ieee80211_mgmt *)ind->payload,
-                                        ind->length, ind->rssi * 100, GFP_ATOMIC);
+        ts = ktime_to_timespec64(ktime_get_boottime());
+        tsf = (u64)ts.tv_sec * 1000000 + div_u64(ts.tv_nsec, 1000);
+        mgmt->u.probe_resp.timestamp = tsf;
+#endif
+        ie = mgmt->u.probe_resp.variable;
+        ielen = len - offsetof(struct ieee80211_mgmt, u.probe_resp.variable);
+        beacon_interval = le16_to_cpu(mgmt->u.probe_resp.beacon_int);
+        capability = le16_to_cpu(mgmt->u.probe_resp.capab_info);
+        /* framework use system bootup time */
+        bss = cfg80211_inform_bss(rwnx_hw->wiphy, chan,
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 18, 0))
+            CFG80211_BSS_FTYPE_UNKNOWN,
+#endif
+            mgmt->bssid, tsf, capability, beacon_interval,
+            ie, ielen, ind->rssi * 100, GFP_ATOMIC);
+
 #if 0
         //print scan result info start
         if(ie != NULL && bss != NULL){
@@ -845,6 +898,7 @@ static inline void cfg80211_chandef_create(struct cfg80211_chan_def *chandef,
         }
 }
 #endif
+
 static inline int rwnx_rx_sm_connect_ind(struct rwnx_hw *rwnx_hw,
                                          struct rwnx_cmd *cmd,
                                          struct ipc_e2a_msg *msg)
@@ -935,6 +989,13 @@ static inline int rwnx_rx_sm_connect_ind(struct rwnx_hw *rwnx_hw,
 		if(atomic_read(&rwnx_hw->sta_flowctrl[sta->sta_idx].tx_pending_cnt) > 0) {
 			AICWFDBG(LOGDEBUG, "sta idx %d fc error %d\n",  sta->sta_idx,  atomic_read(&rwnx_hw->sta_flowctrl[sta->sta_idx].tx_pending_cnt));
 		}
+
+#ifdef CONFIG_RADAR_OR_IR_DETECT
+		if (chan->flags & IEEE80211_CHAN_RADAR)
+			rwnx_radar_detection_enable(&rwnx_hw->radar,
+											RWNX_RADAR_DETECT_REPORT,
+											RWNX_RADAR_RIU);
+#endif
 
         if (rwnx_vif->wep_enabled)
             rwnx_vif->wep_auth_err = false;
@@ -1067,6 +1128,10 @@ static inline int rwnx_rx_sm_connect_ind(struct rwnx_hw *rwnx_hw,
     
 exit:
     rwnx_vif->sta.is_roam = false;
+#ifdef CONFIG_DYNAMIC_PWR
+	rwnx_hw->sta_rssi_idx = ind->ap_idx;
+#endif
+
     return 0;
 }
 
@@ -1134,6 +1199,10 @@ static inline int rwnx_rx_sm_disconnect_ind(struct rwnx_hw *rwnx_hw,
 	} else {
 		AICWFDBG(LOGINFO, "%s roaming no rwnx_cfg80211_unlink_bss \r\n", __func__);
 	}
+
+#ifdef CONFIG_DEBUG_FS
+	rwnx_dbgfs_unregister_rc_stat(rwnx_hw, rwnx_vif->sta.ap);
+#endif
 
 #ifdef CONFIG_BR_SUPPORT
 	struct rwnx_vif *vif = netdev_priv(dev);
@@ -1215,6 +1284,8 @@ static inline int rwnx_rx_sm_external_auth_required_ind(struct rwnx_hw *rwnx_hw,
 	int retry_counter = 10;
 
     RWNX_DBG(RWNX_FN_ENTRY_STR);
+
+    memset((void*)&params, 0, sizeof(struct cfg80211_external_auth_params));
 
     params.action = NL80211_EXTERNAL_AUTH_START;
     memcpy(params.bssid, ind->bssid.array, ETH_ALEN);
@@ -1523,6 +1594,7 @@ static msg_cb_fct mm_hdlrs[MSG_I(MM_MAX)] = {
     [MSG_I(MM_RSSI_STATUS_IND)]        = rwnx_rx_rssi_status_ind,
     [MSG_I(MM_PKTLOSS_IND)]            = rwnx_rx_pktloss_notify_ind,
     [MSG_I(MM_APM_STALOSS_IND)]        = rwnx_apm_staloss_ind,
+    [MSG_I(MM_RADAR_DETECT_IND)] 	   = rwnx_radar_detect_ind,
 };
 
 static msg_cb_fct scan_hdlrs[MSG_I(SCANU_MAX)] = {

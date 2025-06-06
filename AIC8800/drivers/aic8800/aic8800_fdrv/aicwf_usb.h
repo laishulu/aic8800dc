@@ -18,7 +18,6 @@
 #define USB_VENDOR_ID_AIC                0xA69C
 #define USB_VENDOR_ID_AIC_V2             0x368B
 #define USB_VENDOR_ID_TENDA              0x2604
-#define USB_VENDOR_ID_TP                 0x2357
 
 #ifndef CONFIG_USB_BT
 #define USB_PRODUCT_ID_AIC8800          0x8800
@@ -36,10 +35,25 @@
 #define USB_PRODUCT_ID_AIC8800D41       0x8d41
 #define USB_PRODUCT_ID_AIC8800D81X2     0x8d91
 #define USB_PRODUCT_ID_AIC8800D89X2     0x8d99
-#define USB_PRODUCT_ID_AIC8800FC            0x88df
-#define USB_PRODUCT_ID_TENDA                0x0013
-#define USB_PRODUCT_ID_TENDA_U2             0x0014
-#define USB_PRODUCT_ID_TP                   0x0147
+#define USB_PRODUCT_ID_TENDA            0x0013
+#define USB_PRODUCT_ID_TENDA_U2         0x0014
+#define USB_PRODUCT_ID_TENDA_U11        0x001f
+#define USB_PRODUCT_ID_TENDA_U11_PRO    0x0020
+#define USB_PRODUCT_ID_AIC8800FC_CUS1   0x88df
+#define USB_PRODUCT_ID_AIC8800FC_CUS2   0x88E0
+#define USB_PRODUCT_ID_AIC8800FC_CUS3   0x88E1
+#define USB_PRODUCT_ID_AIC8800FC_CUS4   0x88E2
+#define USB_PRODUCT_ID_AIC8800FC_CUS5   0x88E3
+#define USB_PRODUCT_ID_AIC8800FC_CUS6   0x88E5
+
+#define USB_PRODUCT_ID_AIC8800M80_CUS1  0x8D83
+#define USB_PRODUCT_ID_AIC8800M80_CUS2  0x8D85
+#define USB_PRODUCT_ID_AIC8800M80_CUS3  0x8D86
+#define USB_PRODUCT_ID_AIC8800M80_CUS4  0x8D89
+#define USB_PRODUCT_ID_AIC8800M80_CUS5  0x8D8A
+#define USB_PRODUCT_ID_AIC8800M80_CUS6  0x8D8C
+#define USB_PRODUCT_ID_AIC8800M80_CUS7  0x8D8B
+#define USB_PRODUCT_ID_AIC8800M80_CUS8  0x8D8D
 #endif
 
 enum AICWF_IC{
@@ -54,13 +68,13 @@ enum AICWF_IC{
 
 #define AICWF_USB_RX_URBS               (20)//(200)
 #ifdef CONFIG_USB_MSG_IN_EP
-#define AICWF_USB_MSG_RX_URBS           (20)
+#define AICWF_USB_MSG_RX_URBS           (100)
 #endif
 #ifdef CONFIG_USB_TX_AGGR
 #define TXQLEN                          (2048*4)
-#define AICWF_USB_TX_URBS               (30)
+#define AICWF_USB_TX_URBS               (50)
 #else
-#define AICWF_USB_TX_URBS               100//(100)
+#define AICWF_USB_TX_URBS               50//(100)
 #endif
 #define AICWF_USB_TX_LOW_WATER         (AICWF_USB_TX_URBS/4)//25%
 #define AICWF_USB_TX_HIGH_WATER        (AICWF_USB_TX_LOW_WATER*3)//75%
@@ -71,6 +85,7 @@ enum AICWF_IC{
 #endif
 #define AICWF_USB_MSG_MAX_PKT_SIZE      (2048)
 #define AICWF_USB_MAX_PKT_SIZE          (2048)
+#define AICWF_USB_MAX_AMSDU_PKT_SIZE    (2048*6)
 #define AICWF_USB_FC_PERSTA_HIGH_WATER		64
 #define AICWF_USB_FC_PERSTA_LOW_WATER		16
 
@@ -183,6 +198,8 @@ struct aic_usb_dev {
 #endif
 	u16 chipid;
     bool tbusy;
+	u16_l vid;
+	u16_l pid;
 };
 
 extern void aicwf_usb_exit(void);
